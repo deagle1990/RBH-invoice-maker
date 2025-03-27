@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Moonlighting Invoice</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-2 text-sm">
+  <div id="invoice" class="max-w-4xl mx-auto bg-white shadow-md rounded-xl p-6" style="margin-top: 0;">
+    <h1 class="text-xl font-bold mb-4 text-center">Moonlighting Invoice</h1>
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div>
+        <label class="font-semibold">Month:</label>
+        <select id="month" class="w-full border rounded p-1">
+          <option value="">Select Month</option>
+          <script>
+            for (let i = 1; i <= 12; i++) {
+              document.write(`<option value="${i}">${new Date(0, i - 1).toLocaleString('default', { month: 'long' })}</option>`);
+            }
+          </script>
+        </select>
+      </div>
+      <div>
+        <label class="font-semibold">Year:</label>
+        <input type="number" id="year" class="w-full border rounded p-1" value="2025" />
+      </div>
+      <div>
+        <label class="font-semibold">Physician Name:</label>
+        <input type="text" id="physician" class="w-full border rounded p-1" />
+      </div>
+      <div>
+        <label class="font-semibold">Program:</label>
+        <input type="text" id="program" class="w-full border rounded p-1" />
+      </div>
+    </div>
+
+    <h2 class="text-lg font-semibold mt-6 mb-2">On-Call</h2>
+    <table class="w-full border text-left mb-2">
+      <thead class="bg-gray-200">
+        <tr><th class="p-2">Date</th><th>Day</th><th>Call</th><th>Pay</th><th></th></tr>
+      </thead>
+      <tbody id="dutiesTable"></tbody>
+    </table>
+    <button onclick="addDutyRow()" class="bg-green-600 text-white px-3 py-1 rounded mb-6" id="addDutyButton">+ Add Duty Row</button>
+
+    <h2 class="text-lg font-semibold mt-6 mb-2">RVU Billing</h2>
+    <table class="w-full border text-left mb-2">
+      <thead class="bg-gray-200">
+        <tr><th class="p-2">Date</th><th>FIN</th><th>CPT</th><th>Type</th><th>WRVU</th><th>Rate</th><th>Total</th><th></th></tr>
+      </thead>
+      <tbody id="rvuTable"></tbody>
+    </table>
+    <button onclick="addRVURow()" class="bg-green-600 text-white px-3 py-1 rounded mb-6" id="addRVUButton">+ Add RVU Row</button>
+
+    <h2 class="text-lg font-semibold mt-6 mb-2">Hotel Reimbursement</h2>
+    <div class="grid grid-cols-2 gap-4 mb-6">
+      <div>
+        <label class="font-semibold">Number of Nights:</label>
+        <input type="number" id="hotelNights" class="w-full border rounded p-1" value="0" onchange="calcTotals()" />
+      </div>
+      <div>
+        <label class="font-semibold">Cost per Night ($):</label>
+        <input type="number" id="hotelRate" class="w-full border rounded p-1" value="0" onchange="calcTotals()" />
+      </div>
+    </div>
+
+    <div class="text-right text-lg font-bold mb-4">Total: $<span id="totalInvoice">0</span></div>
+
+    <div class="mt-10">
+      <label class="font-semibold">Signature:</label>
+      <div class="border-t border-gray-400 mt-6" style="height: 50px;"></div>
+    </div>
+
+    <div class="mt-10">
+      <label class="font-semibold">Approved By:</label>
+      <div class="border-t border-gray-400 mt-6" style="height: 50px;"></div>
+    </div>
+
+    <button onclick="downloadPDF()" class="bg-blue-600 text-white px-4 py-2 mt-6 rounded" id="downloadBtn">Download PDF</button>
+  </div>
+
+  <script>
+    const WEEKDAY_RATE = 350;
+    const WEEKEND_RATE = 500;
+    const RATES = { Adult: 66.12, Child: 76.99 };
+    const CPT_DATA = {
+      '90792': 4.16,
+      '99232': 1.39,
+      '99233': 2.0,
+      '99236': 4.2,
+      '99238': 1.28
+    };
+
+    function addDutyRow() {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td><input type="date" onchange="calcTotals()" class="w-full border rounded p-1"></td>
+        <td class="day">-</td>
+        <td>
+          <select onchange="calcTotals()" class="callType w-full border rounded p-1">
+            <option value="">--</option>
+            <option value="Evening Only">Evening Only</option>
+            <option value="Primary">Primary</option>
+          </select>
+        </td>
+        <td class="callPay text-center">0</td>
+        <td class="text-center print:hidden"><button onclick="this.closest('tr').remove(); calcTotals();" class="text-red-600">&times;</button></td>
+      `;
+      document.getElementById('dutiesTable').appendChild(row);
+    }
+
+    function addRVURow() {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td><input type="date" class="w-full p-1 border rounded" /></td>
+        <td><input type="text" class="w-full p-1 border rounded" placeholder="FIN #" /></td>
+        <td>
+          <select onchange="calcTotals()" class="cpt w-full p-1 border rounded">
+            <option value="">--</option>
+            ${Object.keys(CPT_DATA).map(code => `<option value="${code}">${code}</option>`).join('')}
+          </select>
+        </td>
+        <td>
+          <select onchange="calcTotals()" class="type w-full p-1 border rounded">
+            <option value="">--</option>
+            <option value="Adult">Adult</option>
+            <option value="Child">Child</option>
+          </select>
+        </td>
+        <td class="wrvu text-center">0</td>
+        <td class="rate text-center">0</td>
+        <td class="rvuTotal text-center">0</td>
+        <td class="text-center print:hidden"><button onclick="this.closest('tr').remove(); calcTotals();" class="text-red-600">&times;</button></td>
+      `;
+      document.getElementById('rvuTable').appendChild(row);
+    }
+
+    function calcTotals() {
+      let total = 0;
+
+      document.querySelectorAll('#dutiesTable tr').forEach(row => {
+        const dateInput = row.querySelector('input[type="date"]');
+        const typeSelect = row.querySelector('.callType');
+        const dayCell = row.querySelector('.day');
+        const cell = row.querySelector('.callPay');
+        let pay = 0;
+        if (typeSelect.value === 'Evening Only') pay = WEEKDAY_RATE;
+        else if (typeSelect.value === 'Primary') pay = WEEKEND_RATE;
+        cell.textContent = pay;
+        total += pay;
+
+        if (dateInput.value) {
+          const day = new Date(dateInput.value).toLocaleDateString('en-US', { weekday: 'short' });
+          dayCell.textContent = day;
+        } else {
+          dayCell.textContent = '-';
+        }
+      });
+
+      document.querySelectorAll('#rvuTable tr').forEach(row => {
+        const cpt = row.querySelector('.cpt')?.value;
+        const type = row.querySelector('.type')?.value;
+        const wrvu = CPT_DATA[cpt] || 0;
+        const rate = RATES[type] || 0;
+        const lineTotal = wrvu * rate;
+        row.querySelector('.wrvu').textContent = wrvu.toFixed(2);
+        row.querySelector('.rate').textContent = rate.toFixed(2);
+        row.querySelector('.rvuTotal').textContent = lineTotal.toFixed(2);
+        total += lineTotal;
+      });
+
+      const hotelNights = parseInt(document.getElementById('hotelNights').value || 0);
+      const hotelRate = parseFloat(document.getElementById('hotelRate').value || 0);
+      const hotelTotal = hotelNights * hotelRate;
+      total += hotelTotal;
+
+      document.getElementById('totalInvoice').textContent = total.toFixed(2);
+    }
+
+    function downloadPDF() {
+  document.getElementById('addDutyButton').style.display = 'none';
+  document.getElementById('addRVUButton').style.display = 'none';
+  document.getElementById('downloadBtn').style.display = 'none';
+  document.querySelectorAll('.text-red-600').forEach(btn => btn.style.display = 'none');
+
+  const invoice = document.getElementById('invoice');
+  html2pdf().set({
+    margin: [0.25, 0.25, 0.5, 0.25],
+    filename: 'Moonlighting_Invoice.pdf',
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, scrollY: 0 },
+    jsPDF: {
+      unit: 'in',
+      format: 'letter',
+      orientation: 'portrait',
+      putOnlyUsedFonts: true
+    },
+    pagebreak: { mode: ['css', 'legacy'] }
+  }).from(invoice).toPdf().get('pdf').then(function (pdf) {
+    const totalPages = pdf.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      pdf.setPage(i);
+      pdf.setFontSize(8);
+      pdf.text(`Page ${i} of ${totalPages}`, 7.5, 10.5);
+    }
+  }).save().then(() => {
+    document.getElementById('addDutyButton').style.display = '';
+    document.getElementById('addRVUButton').style.display = '';
+    document.getElementById('downloadBtn').style.display = '';
+    document.querySelectorAll('.text-red-600').forEach(btn => btn.style.display = '');
+  });
+}
+document.addEventListener("DOMContentLoaded", function () {
+  addRVURow();
+  addDutyRow();
+  window.addRVURow = addRVURow;
+  window.addDutyRow = addDutyRow;
+  window.calcTotals = calcTotals;
+  window.downloadPDF = downloadPDF;
+});
+  </script>
+</body>
+</html>
